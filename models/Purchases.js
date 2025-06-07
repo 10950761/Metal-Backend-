@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const purchaseSchema = new mongoose.Schema({
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   supplierName: { type: String, required: true },
   supplierLocation: { type: String, required: true },
   supplierCompany: { type: String },
@@ -11,5 +12,6 @@ const purchaseSchema = new mongoose.Schema({
   price: { type: Number, required: true },
   notes: { type: String },
 }, { timestamps: true });
+
 
 module.exports = mongoose.model('Purchase', purchaseSchema);

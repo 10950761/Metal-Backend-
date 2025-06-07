@@ -41,7 +41,8 @@ const createSale = async (req, res) => {
       productName,
       price,
       quantity,
-      totalPrice
+      totalPrice,
+      user: req.user._id 
     });
 
     await sale.save();
@@ -56,7 +57,7 @@ const createSale = async (req, res) => {
 // Get All Sales
 const getSales = async (req, res) => {
   try {
-    const sales = await Sale.find().sort({ createdAt: -1 });
+    const sales = await Sale.find({ user: req.user._id }).sort({ createdAt: -1 });
     res.status(200).json(sales);
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch sales.' });
