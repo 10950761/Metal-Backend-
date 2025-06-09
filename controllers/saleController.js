@@ -4,7 +4,7 @@ const Stock = require('../models/Stock');
 // Create Sale
 const createSale = async (req, res) => {
   try {
-    const { customerName, customerNumber, date, time, productName, price, quantity, totalPrice } = req.body;
+    const { customerName, customerNumber, date, time, productName, price, quantity } = req.body;
 
     const stock = await Stock.findOne({
       productName: { $regex: new RegExp(`^${productName}$`, 'i') }
@@ -41,7 +41,6 @@ const createSale = async (req, res) => {
       productName,
       price,
       quantity,
-      totalPrice,
       user: req.user._id 
     });
 
@@ -57,29 +56,77 @@ const createSale = async (req, res) => {
 // Get All Sales
 const getSales = async (req, res) => {
   try {
-    const sales = await Sale.find({ user: req.user._id }).sort({ createdAt: -1 });
-    res.status(200).json(sales);
+    const { history } = req.query;
+    
+    if (history) {
+      const sales = await Sale.find({
+        user: req.user._id
+      }).sort({ createdAt: -1 });
+      return res.status(200).json(sales);
+    } else {
+      const sales = await Sale.find({
+        user: req.user._id,
+        deleted: false
+      }).sort({ createdAt: -1 });
+      return res.status(200).json(sales);
+    }
   } catch (error) {
     res.status(500).json({ message: 'Failed to fetch sales.' });
   }
 };
 
-// Delete Sale
-const deleteSale = async (req, res) => {
+// New endpoint for deleting old sales
+const deleteOldSales = async (req, res) => {
   try {
-    const sale = await Sale.findById(req.params.id);
-    if (!sale) return res.status(404).json({ error: "Sale not found" });
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
 
-    // Restore quantity to stock
-    await Stock.updateOne(
-      { productName: { $regex: new RegExp(`^${sale.productName}$`, 'i') } },
-      { $inc: { quantity: sale.quantity } }
-    );
+    const result = await Sale.deleteMany({
+      deleted: true,
+      deletedAt: { $lt: threeDaysAgo }
+    });
 
-    await Sale.findByIdAndDelete(req.params.id);
-    res.json({ message: "Sale deleted and stock restored" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(200).json({
+      message: `Deleted ${result.deletedCount} old sales`,
+      deletedCount: result.deletedCount
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to delete old sales.' });
+  }
+};
+
+
+// Delete Sale
+  const deleteSale = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sale = await Sale.findById(id);
+    if (!sale) {
+      return res.status(404).json({ message: "Sale not found" });
+    }
+
+    if (!sale.deleted) {
+      return res.status(403).json({ message: "Cannot delete permanently before soft-deleting." });
+    }
+
+    if (!sale.deletedAt) {
+      return res.status(403).json({ message: "Deletion timestamp missing." });
+    }
+
+    const deletedAt = new Date(sale.deletedAt);
+    const now = new Date();
+    const diffDays = (now - deletedAt) / (1000 * 60 * 60 * 24);
+
+    if (diffDays < 3) {
+      return res.status(403).json({ message: "Cannot delete permanently before 3 days." });
+    }
+
+    await Sale.findByIdAndDelete(id);
+    res.json({ message: "Sale permanently deleted." });
+
+  } catch (error) {
+    console.error('Error deleting sale:', error);
+    res.status(500).json({ message: "Error deleting sale" });
   }
 };
 
@@ -139,9 +186,34 @@ const updateSale = async (req, res) => {
   }
 };
 
+const softDeleteSale = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const sale = await Sale.findById(id);
+    if (!sale) {
+      return res.status(404).json({ message: "Sale not found." });
+    }
+
+    if (sale.deleted) {
+      return res.status(400).json({ message: "Sale already soft-deleted." });
+    }
+
+    sale.deleted = true;
+    sale.deletedAt = new Date();
+    await sale.save();
+
+    res.status(200).json({ message: "Sale soft-deleted." });
+  } catch (err) {
+    console.error("Soft delete error:", err);
+    res.status(500).json({ message: "Failed to soft delete sale." });
+  }
+};
+
 module.exports = {
   createSale,
   getSales,
   deleteSale,
-  updateSale
+  updateSale,
+  softDeleteSale,
+  deleteOldSales
 };

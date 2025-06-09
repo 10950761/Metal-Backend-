@@ -9,7 +9,8 @@ const saleSchema = new mongoose.Schema({
   productName: { type: String, required: true },
   price: { type: Number, required: true },
   quantity: { type: Number, required: true },
-  totalPrice: { type: Number, required: true }
+ deleted: { type: Boolean, default: false },
+deletedAt: { type: Date }
 }, { timestamps: true });
 
 

@@ -11,6 +11,8 @@ const purchaseSchema = new mongoose.Schema({
   productQuantity: { type: Number, required: true },
   price: { type: Number, required: true },
   notes: { type: String },
+  deleted: { type: Boolean, default: false },
+  deletedAt: { type: Date }
 }, { timestamps: true });
 
 
