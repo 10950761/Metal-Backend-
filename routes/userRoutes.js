@@ -5,8 +5,9 @@ const protect = require('../middleware/authMiddleware');
 
 router.post('/register', UserController.register);
 router.post('/login', UserController.login);
-router.get("/profile", protect, async (req, res) => {
-  res.json(req.user); 
+router.post('/google-login', UserController.googleLogin);
+router.get('/profile', protect, async (req, res) => {
+  res.json(req.user);
 });
 
 module.exports = router;
