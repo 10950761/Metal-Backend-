@@ -1,75 +1,218 @@
+const mongoose = require('mongoose');
 const Purchase = require("../models/Purchases");
 const Stock = require("../models/Stock");
 
 // CREATE PURCHASE
 const createPurchase = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
-    const {
-      supplierName,
-      supplierLocation,
-      supplierCompany,
-      date,
-      time,
-      productName,
-      productQuantity,
-      price,
-      notes,
-    } = req.body;
+    await session.withTransaction(async () => {
+      const {
+        supplierName,
+        supplierLocation,
+        supplierCompany,
+        date,
+        time,
+        productName,
+        productQuantity,
+        price,
+        notes,
+      } = req.body;
 
-    const trimmedProductName = productName.trim();
-    const quantity = parseFloat(productQuantity);
+      // Input validation
+      const trimmedProductName = productName?.toString().trim();
+      if (!trimmedProductName) {
+        throw new Error("Product name is required and cannot be empty.");
+      }
 
-    if (!trimmedProductName || isNaN(quantity) || quantity <= 0) {
-      return res
-        .status(400)
-        .json({ message: "Invalid product name or quantity." });
-    }
+      const quantity = parseFloat(productQuantity);
+      const unitPrice = parseFloat(price);
+      if (isNaN(quantity) || quantity <= 0 || isNaN(unitPrice) || unitPrice <= 0) {
+        throw new Error("Quantity and price must be positive numbers.");
+      }
 
-    const newPurchase = new Purchase({
-      supplierName,
-      supplierLocation,
-      supplierCompany,
-      date,
-      time,
-      productName: trimmedProductName,
-      productQuantity: quantity,
-      price,
-      notes,
-      user: req.user._id,
-    });
-
-    await newPurchase.save();
-
-    let stock = await Stock.findOne({
-      productName: trimmedProductName,
-      user: req.user._id,
-    });
-
-    if (stock) {
-      stock.quantity += quantity;
-      stock.unitPrice = price;
-      stock.supplierCompany = supplierCompany?.trim() || "N/A"; 
-      stock.lastUpdated = new Date();
-      await stock.save();
-    } else {
-      stock = new Stock({
+      // Create purchase record
+      const newPurchase = new Purchase({
+        supplierName: supplierName?.trim(),
+        supplierLocation: supplierLocation?.trim(),
+        supplierCompany: supplierCompany?.trim(),
+        date,
+        time,
         productName: trimmedProductName,
-        quantity,
-        unitPrice: price,
-        supplierCompany: supplierCompany?.trim() || "N/A", 
+        productQuantity: quantity,
+        price: unitPrice,
+        notes: notes?.trim(),
         user: req.user._id,
-        lastUpdated: new Date(),
       });
-      await stock.save();
-    }
 
-    res.status(201).json({
-      message: "Purchase and stock recorded successfully",
-      purchase: newPurchase,
+      await newPurchase.save({ session });
+
+      // Stock update operation
+      const filter = { 
+        productName: trimmedProductName, 
+        user: req.user._id 
+      };
+      
+      // First try to find existing stock
+      let existingStock = await Stock.findOne(filter).session(session);
+      const now = new Date();
+
+      if (existingStock) {
+        // Update existing stock
+        const newQuantity = existingStock.quantity + quantity;
+        const newTotalValue = existingStock.totalValue + (quantity * unitPrice);
+        const newUnitPrice = newTotalValue / newQuantity;
+
+        existingStock = await Stock.findOneAndUpdate(
+          filter,
+          {
+            $set: {
+              quantity: newQuantity,
+              unitPrice: newUnitPrice,
+              totalValue: newTotalValue,
+              lastUpdated: now
+            },
+            $push: {
+              priceHistory: {
+                date: now,
+                price: unitPrice,
+                type: 'purchase',
+                referenceId: newPurchase._id
+              }
+            }
+          },
+          { new: true, session }
+        );
+      } else {
+        // Create new stock entry
+        existingStock = await Stock.create([{
+          productName: trimmedProductName,
+          user: req.user._id,
+          supplierCompany: supplierCompany?.trim() || 'N/A',
+          quantity: quantity,
+          unitPrice: unitPrice,
+          totalValue: quantity * unitPrice,
+          lastUpdated: now,
+          priceHistory: [{
+            date: now,
+            price: unitPrice,
+            type: 'purchase',
+            referenceId: newPurchase._id
+          }]
+        }], { session });
+        existingStock = existingStock[0];
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: "Purchase and stock recorded successfully",
+        purchase: newPurchase,
+        stock: existingStock
+      });
     });
   } catch (error) {
-    console.error("Error creating purchase:", error);
-    res.status(500).json({ message: "Failed to record purchase" });
+    console.error("Error in createPurchase:", error);
+    
+    let statusCode = 500;
+    let errorMessage = "Internal server error";
+    
+    if (error.message.includes("Product name is required") || 
+        error.message.includes("must be positive numbers")) {
+      statusCode = 400;
+      errorMessage = error.message;
+    } else if (error.code === 11000) {
+      statusCode = 409;
+      errorMessage = "Duplicate product entry detected. Please try again.";
+    }
+
+    return res.status(statusCode).json({
+      success: false,
+      message: errorMessage,
+      error: error.message
+    });
+  } finally {
+    session.endSession();
+  }
+};
+// DELETE PURCHASE
+const deletePurchase = async (req, res) => {
+  try {
+    const purchase = await Purchase.findById(req.params.id);
+    if (!purchase) return res.status(404).json({ error: "Purchase not found" });
+
+    // This will properly decrease unit price
+    const updatedStock = await Stock.reversePurchase(purchase._id, req.user._id);
+    
+    await Purchase.findByIdAndDelete(req.params.id);
+
+    res.json({
+      message: "Purchase deleted and stock updated",
+      stock: updatedStock
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// UPDATE PURCHASE
+const updatePurchase = async (req, res) => {
+  try {
+    const existingPurchase = await Purchase.findById(req.params.id);
+    if (!existingPurchase) {
+      return res.status(404).json({ error: "Purchase not found" });
+    }
+
+    const updatedQuantity = parseFloat(req.body.productQuantity);
+    const updatedPrice = parseFloat(req.body.price);
+    const trimmedProductName = req.body.productName.trim();
+
+    if (!trimmedProductName || isNaN(updatedQuantity) || updatedQuantity <= 0 || 
+        isNaN(updatedPrice) || updatedPrice <= 0) {
+      return res.status(400).json({
+        message: "Invalid product name, quantity or price.",
+      });
+    }
+
+    // First reverse the original purchase
+    await Stock.handleSale(
+      existingPurchase.productName.trim(),
+      existingPurchase.productQuantity,
+      req.user._id,
+      existingPurchase._id
+    );
+
+    // Then apply the updated purchase
+    const updatedStock = await Stock.handlePurchase(
+      trimmedProductName,
+      updatedQuantity,
+      updatedPrice,
+      req.user._id,
+      existingPurchase._id
+    );
+
+    // Update purchase record
+    const updatedPurchase = await Purchase.findByIdAndUpdate(
+      req.params.id,
+      {
+        ...req.body,
+        productName: trimmedProductName,
+        productQuantity: updatedQuantity,
+        price: updatedPrice
+      },
+      { new: true }
+    );
+
+    res.json({
+      message: "Purchase updated successfully",
+      purchase: updatedPurchase,
+      stock: updatedStock
+    });
+  } catch (err) {
+    console.error("Error updating purchase:", err);
+    res.status(500).json({ 
+      error: err.message || "Failed to update purchase" 
+    });
   }
 };
 
@@ -97,93 +240,6 @@ const getPurchases = async (req, res) => {
 };
 
 
-// DELETE PURCHASE
-const deletePurchase = async (req, res) => {
-  try {
-    const purchase = await Purchase.findById(req.params.id);
-    if (!purchase)
-      return res.status(404).json({ error: "Purchase not found" });
-
-    const trimmedProductName = purchase.productName.trim();
-
-    const stock = await Stock.findOne({
-      productName: trimmedProductName,
-      user: req.user._id,
-    });
-
-    if (stock) {
-      const updatedQuantity = Math.max(
-        stock.quantity - purchase.productQuantity,
-        0
-      );
-      stock.quantity = updatedQuantity;
-      stock.lastUpdated = updatedQuantity === 0 ? null : new Date();
-      await stock.save();
-    }
-
-    await Purchase.findByIdAndDelete(req.params.id);
-
-    res.json({ message: "Purchase deleted and stock updated" });
-  } catch (err) {
-    console.error("Error deleting purchase:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// UPDATE PURCHASE
-const updatePurchase = async (req, res) => {
-  try {
-    const existingPurchase = await Purchase.findById(req.params.id);
-    if (!existingPurchase)
-      return res.status(404).json({ error: "Purchase not found" });
-
-    const updatedQuantity = parseFloat(req.body.productQuantity);
-    const trimmedProductName = req.body.productName.trim();
-
-    if (!trimmedProductName || isNaN(updatedQuantity) || updatedQuantity <= 0) {
-      return res.status(400).json({
-        message: "Invalid updated product name or quantity.",
-      });
-    }
-
-    // Subtract old quantity
-    await Stock.updateOne(
-      {
-        productName: existingPurchase.productName.trim(),
-        user: req.user._id,
-      },
-      {
-        $inc: { quantity: -existingPurchase.productQuantity },
-      }
-    );
-
-    // Update purchase
-    const updatedPurchase = await Purchase.findByIdAndUpdate(
-      req.params.id,
-      {
-        ...req.body,
-        productName: trimmedProductName,
-        productQuantity: updatedQuantity,
-      },
-      { new: true }
-    );
-
-    // Add new quantity
-    await Stock.updateOne(
-      { productName: trimmedProductName, user: req.user._id },
-      {
-        $inc: { quantity: updatedQuantity },
-        $set: { unitPrice: req.body.price, lastUpdated: new Date() },
-      },
-      { upsert: true }
-    );
-
-    res.json(updatedPurchase);
-  } catch (err) {
-    console.error("Error updating purchase:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
 
 // SOFT DELETE PURCHASE
 const softDeletePurchase = async (req, res) => {

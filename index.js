@@ -6,6 +6,7 @@ const userRoutes = require('./routes/userRoutes');
 const saleRoutes = require('./routes/saleRoutes');
 const purchaseRoutes = require('./routes/purchaseRoutes');
 const stockRoutes = require('./routes/stockRoutes');
+const notificationRoutes = require('./routes/notificationRoutes')
 
 dotenv.config();
 
@@ -20,6 +21,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/stock', stockRoutes);
+app.use('/api/notification', notificationRoutes)
 
 /* CONNECTING TO MONGODB */
 const PORT = process.env.PORT || 10000;
