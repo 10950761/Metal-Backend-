@@ -21,7 +21,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/purchases', purchaseRoutes);
 app.use('/api/stock', stockRoutes);
-app.use('/api/notification', notificationRoutes)
+app.use('/api/notifications', notificationRoutes)
 
 /* CONNECTING TO MONGODB */
 const PORT = process.env.PORT || 10000;
