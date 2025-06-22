@@ -57,7 +57,7 @@ const stockSchema = new mongoose.Schema({
 
 // Indexes
 stockSchema.index({ productName: 1, user: 1 }, { unique: true });
-// models/Stock.js
+
 stockSchema.statics.handlePurchase = async function(productName, quantity, purchasePrice, userId, purchaseId) {
   // Use findOneAndUpdate with upsert to avoid race conditions
   const result = await this.findOneAndUpdate(
@@ -117,8 +117,8 @@ stockSchema.statics.handleSale = async function(productName, quantity, userId, s
   if (stockItem.quantity < quantity) throw new Error('Insufficient stock');
 
   const newQuantity = stockItem.quantity - quantity;
-  const newUnitPrice = Math.max(stockItem.unitPrice * 0.95, 0); 
-  const newTotalValue = newUnitPrice * newQuantity;
+  const newUnitPrice = newQuantity === 0 ? 0 : Math.max(stockItem.unitPrice * 0.95, 0);
+  const newTotalValue = newQuantity === 0 ? 0 : newUnitPrice * newQuantity;
 
   return this.findOneAndUpdate(
     { _id: stockItem._id },
