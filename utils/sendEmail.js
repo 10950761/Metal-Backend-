@@ -23,7 +23,7 @@ const sendSaleEmail = async (
   await transporter.sendMail({
     from: "metaltoolsproshop@gmail.com",
     to: toEmail,
-    subject: "Sale Notification - Metal Tools Pro",
+    subject: "Sale Notification - Willin's Smart System",
     html: `<h3>Sale Confirmation</h3>
 <p><strong>Product:</strong> ${productName}</p>
 <p><strong>Quantity:</strong> ${quantity}</p>
@@ -32,7 +32,7 @@ const sendSaleEmail = async (
     customerNumber || "N/A"
   })</p>
 <p><strong>Time:</strong> ${time}, ${date}</p>
-<p>Thank you for using Metal Tools Pro!</p>`,
+<p>Thank you for using our Smart System!</p>`,
   });
 };
 
